@@ -1,8 +1,8 @@
 """
-Boletín Oficial Provincia de Buenos Aires - Scraper v2
+Boletín Oficial Provincia de Buenos Aires - Scraper v3
 --------------------------------------------------------
 Scrapes spending and normas from the Boletín Oficial PBA.
-Uses direct HTTP requests to fetch recent norms.
+Also scrapes licitaciones from PBAC (Portal de Buenos Aires Compras).
 """
 import requests
 from bs4 import BeautifulSoup
@@ -13,10 +13,28 @@ import os
 from datetime import datetime, timedelta
 from gradio_client import Client
 
+# Selenium for PBAC (JS-heavy site)
+try:
+    from selenium import webdriver
+    from selenium.webdriver.chrome.service import Service
+    from selenium.webdriver.chrome.options import Options
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    from webdriver_manager.chrome import ChromeDriverManager
+    SELENIUM_AVAILABLE = True
+except ImportError:
+    SELENIUM_AVAILABLE = False
+    print("⚠️ Selenium no disponible - licitaciones PBAC deshabilitadas")
+
 # Configuration
 BASE_URL = "https://normas.gba.gob.ar"
 BOLETIN_HOME = "https://boletinoficial.gba.gob.ar"
+PBAC_URL = "https://pbac.cgp.gba.gov.ar/ListarAperturaProxima.aspx"
 DATA_DIR = "docs"
+
+# PBAC scraping settings
+PBAC_MAX_ITEMS = 20  # Max licitaciones to fetch (each requires a page visit)
 
 # Types of norms to search
 NORM_TYPES = ['resolucion', 'disposicion', 'decreto']
@@ -346,15 +364,188 @@ def process_norms_with_ai(norms, client):
     
     return norms
 
-def generate_html(data):
+def scrape_pbac_licitaciones():
+    """
+    Scrape licitaciones from PBAC portal using Selenium.
+    Navigates to each tender's detail page to extract the amount.
+    """
+    if not SELENIUM_AVAILABLE:
+        print("⚠️ Selenium no disponible - saltando PBAC")
+        return []
+    
+    print(f"\n🏛️ Scrapeando licitaciones de PBAC...")
+    licitaciones = []
+    driver = None
+    
+    try:
+        # Setup Chrome in headless mode
+        options = Options()
+        options.add_argument("--headless")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--window-size=1920,1080")
+        options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        
+        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+        driver.set_page_load_timeout(30)
+        
+        # Load the list page
+        print("   📄 Cargando lista de licitaciones...")
+        driver.get(PBAC_URL)
+        time.sleep(3)
+        
+        # Get all process links from the table
+        process_links = []
+        try:
+            table = WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.ID, "ctl00_CPH1_GridListaPliegos"))
+            )
+            rows = table.find_elements(By.TAG_NAME, "tr")[1:]  # Skip header
+            
+            for row in rows[:PBAC_MAX_ITEMS]:
+                try:
+                    cols = row.find_elements(By.TAG_NAME, "td")
+                    if len(cols) >= 6:
+                        # Extract basic info from list
+                        link_elem = cols[0].find_element(By.TAG_NAME, "a")
+                        link_id = link_elem.get_attribute("id")
+                        numero = link_elem.text.strip()
+                        nombre = cols[1].text.strip()[:100]
+                        tipo = cols[2].text.strip()
+                        fecha_apertura = cols[3].text.strip()
+                        estado = cols[4].text.strip()
+                        unidad = cols[5].text.strip()[:100]
+                        
+                        process_links.append({
+                            'link_id': link_id,
+                            'numero': numero,
+                            'nombre': nombre,
+                            'tipo': tipo,
+                            'fecha_apertura': fecha_apertura,
+                            'estado': estado,
+                            'unidad': unidad
+                        })
+                except Exception as e:
+                    continue
+            
+            print(f"   ✅ Encontradas {len(process_links)} licitaciones en lista")
+            
+        except Exception as e:
+            print(f"   ⚠️ Error obteniendo lista: {e}")
+            driver.quit()
+            return []
+        
+        # Now visit each detail page to get the amount
+        print(f"   💰 Extrayendo montos de {len(process_links)} licitaciones...")
+        
+        for i, proc in enumerate(process_links):
+            try:
+                # Click on the link (via JS postback)
+                link_elem = driver.find_element(By.ID, proc['link_id'])
+                driver.execute_script("arguments[0].click();", link_elem)
+                time.sleep(2)
+                
+                # Wait for detail page to load
+                WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located((By.TAG_NAME, "body"))
+                )
+                
+                # Extract amount from detail page
+                monto = None
+                monto_fmt = "Monto no especificado"
+                
+                # Look for "Monto" label and extract value
+                try:
+                    page_text = driver.find_element(By.TAG_NAME, "body").text
+                    
+                    # Try to find amount pattern
+                    monto_match = re.search(r'Monto\s*\$?\s*([\d.,]+)', page_text, re.I)
+                    if monto_match:
+                        monto_str = monto_match.group(1).replace('.', '').replace(',', '.')
+                        try:
+                            monto = float(monto_str)
+                            if monto > 0:
+                                monto_fmt = f"${monto:,.0f}"
+                        except:
+                            pass
+                    
+                    # Alternative: search for $ pattern near Monto
+                    if not monto:
+                        alt_match = re.search(r'Monto[^$]*\$\s*([\d.]+(?:,\d{2})?)', page_text)
+                        if alt_match:
+                            monto_str = alt_match.group(1).replace('.', '').replace(',', '.')
+                            try:
+                                monto = float(monto_str)
+                                if monto > 0:
+                                    monto_fmt = f"${monto:,.0f}"
+                            except:
+                                pass
+                                
+                except Exception as e:
+                    pass
+                
+                # Get the detail URL for linking
+                detail_url = driver.current_url
+                
+                # Build licitacion object
+                licitaciones.append({
+                    'numero': proc['numero'],
+                    'nombre': proc['nombre'],
+                    'tipo': proc['tipo'],
+                    'fecha_apertura': proc['fecha_apertura'],
+                    'estado': proc['estado'],
+                    'unidad': proc['unidad'],
+                    'monto': monto,
+                    'monto_fmt': monto_fmt,
+                    'url': detail_url
+                })
+                
+                if monto:
+                    print(f"     [{i+1}/{len(process_links)}] {proc['numero']}: ${monto:,.0f}")
+                else:
+                    print(f"     [{i+1}/{len(process_links)}] {proc['numero']}: Sin monto")
+                
+                # Navigate back to list
+                driver.back()
+                time.sleep(1.5)
+                
+                # Wait for table to reload
+                WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located((By.ID, "ctl00_CPH1_GridListaPliegos"))
+                )
+                
+            except Exception as e:
+                print(f"     ⚠️ Error procesando {proc.get('numero', '?')}: {e}")
+                # Try to recover by going back to list
+                try:
+                    driver.get(PBAC_URL)
+                    time.sleep(2)
+                except:
+                    pass
+                continue
+        
+        driver.quit()
+        print(f"   ✅ Total licitaciones extraídas: {len(licitaciones)}")
+        return licitaciones
+        
+    except Exception as e:
+        print(f"⚠️ Error en PBAC scraping: {e}")
+        if driver:
+            driver.quit()
+        return []
+
+def generate_html(data, licitaciones=None):
     """Generate static HTML site"""
     print("🌐 Generando HTML...")
     
+    licitaciones = licitaciones or []
     gastos = [n for n in data['normas'] if n.get('tiene_gasto')]
     otras = [n for n in data['normas'] if not n.get('tiene_gasto')]
     
-    # Sort gastos by amount
+    # Sort by amount
     gastos.sort(key=lambda x: x.get('monto', 0), reverse=True)
+    licitaciones.sort(key=lambda x: x.get('monto', 0) or 0, reverse=True)
     
     html = f'''<!DOCTYPE html>
 <html lang="es">
@@ -657,6 +848,10 @@ def generate_html(data):
             <p class="update-time">Última actualización: {datetime.now().strftime('%d/%m/%Y %H:%M')}</p>
             <div class="stats">
                 <div class="stat">
+                    <div class="stat-value">{len(licitaciones)}</div>
+                    <div class="stat-label">🏢 Licitaciones PBAC</div>
+                </div>
+                <div class="stat">
                     <div class="stat-value">{len(gastos)}</div>
                     <div class="stat-label">💰 Gastos / Contrataciones</div>
                 </div>
@@ -664,21 +859,24 @@ def generate_html(data):
                     <div class="stat-value">{len(otras)}</div>
                     <div class="stat-label">📜 Otras Normas</div>
                 </div>
-                <div class="stat">
-                    <div class="stat-value">{len(data['normas'])}</div>
-                    <div class="stat-label">📊 Total Analizadas</div>
-                </div>
             </div>
         </div>
     </header>
     
     <div class="container">
         <div class="tabs">
-            <button class="tab active" onclick="showTab('gastos', this)">💰 Gastos y Contrataciones</button>
+            <button class="tab active" onclick="showTab('licitaciones', this)">🏢 Licitaciones PBAC</button>
+            <button class="tab" onclick="showTab('gastos', this)">💰 Gastos y Contrataciones</button>
             <button class="tab" onclick="showTab('normas', this)">📜 Otras Disposiciones</button>
         </div>
         
-        <div id="tab-gastos" class="tab-content active">
+        <div id="tab-licitaciones" class="tab-content active">
+            <div class="card-grid">
+                {generate_licitaciones_cards(licitaciones) if licitaciones else '<div class="empty-state"><h3>No se encontraron licitaciones</h3><p>No hay licitaciones disponibles del portal PBAC.</p></div>'}
+            </div>
+        </div>
+        
+        <div id="tab-gastos" class="tab-content">
             <div class="card-grid">
                 {generate_cards(gastos, is_spending=True) if gastos else '<div class="empty-state"><h3>No se encontraron gastos</h3><p>No hay resoluciones de gasto o contratación en este boletín.</p></div>'}
             </div>
@@ -721,6 +919,42 @@ def generate_html(data):
         json.dump(data, f, indent=2, ensure_ascii=False)
     
     print(f"✅ HTML generado en {DATA_DIR}/index.html")
+
+def generate_licitaciones_cards(licitaciones):
+    """Generate HTML cards for PBAC licitaciones"""
+    cards = []
+    for lic in licitaciones:
+        # Determine card class based on amount
+        monto = lic.get('monto', 0) or 0
+        if monto > 100000000:  # Over 100 million
+            card_class = 'card expensive'
+        elif monto > 0:
+            card_class = 'card spending'
+        else:
+            card_class = 'card'
+        
+        amount_html = f'<div class="amount">{lic.get("monto_fmt", "Monto no especificado")}</div>'
+        
+        cards.append(f'''
+            <div class="{card_class}">
+                {amount_html}
+                <div class="title">{html_escape(lic.get('nombre', 'Sin nombre')[:80])}</div>
+                <div class="summary" style="display:block;">
+                    <strong>Número:</strong> {html_escape(lic.get('numero', '-'))}<br>
+                    <strong>Tipo:</strong> {html_escape(lic.get('tipo', '-'))}<br>
+                    <strong>Fecha apertura:</strong> {html_escape(lic.get('fecha_apertura', '-'))}<br>
+                    <strong>Estado:</strong> {html_escape(lic.get('estado', '-'))}<br>
+                    <strong>Unidad:</strong> {html_escape(lic.get('unidad', '-')[:60])}
+                </div>
+                <div class="meta">
+                    <span class="tag">{lic.get('tipo', 'Licitación')}</span>
+                    <span class="tag">{lic.get('estado', '-')}</span>
+                    <a href="{lic.get('url', '#')}" target="_blank" class="btn btn-primary">📄 Ver pliego</a>
+                </div>
+            </div>
+        ''')
+    
+    return '\n'.join(cards)
 
 def generate_cards(norms, is_spending=False):
     """Generate HTML cards for norms"""
@@ -822,8 +1056,11 @@ def main():
         'normas': norms
     }
     
-    # Generate HTML
-    generate_html(data)
+    # Scrape PBAC licitaciones
+    licitaciones = scrape_pbac_licitaciones()
+    
+    # Generate HTML with all data
+    generate_html(data, licitaciones)
     
     elapsed = time.time() - start_time
     print(f"\n⏱️  Tiempo total: {elapsed:.1f} segundos")
