@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Boletín Oficial PBA - Análisis con IA</title>
+    <meta name="description" content="Análisis del Boletín Oficial de la Provincia de Buenos Aires con resúmenes generados por IA para transparencia ciudadana">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0f172a;
+            --bg-secondary: #1e293b;
+            --bg-card: #334155;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --accent: #3b82f6;
+            --accent-glow: rgba(59, 130, 246, 0.3);
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --border: rgba(255,255,255,0.08);
+        }
+        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: 'Inter', system-ui, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        header {
+            background: linear-gradient(135deg, var(--bg-secondary) 0%, rgba(59, 130, 246, 0.1) 100%);
+            border-bottom: 1px solid var(--border);
+            padding: 40px 0;
+            margin-bottom: 30px;
+        }
+        
+        header h1 {
+            font-size: 2.2rem;
+            font-weight: 700;
+            margin-bottom: 10px;
+            background: linear-gradient(90deg, #60a5fa, #34d399);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .subtitle {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+            margin-bottom: 5px;
+        }
+        
+        .update-time {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            opacity: 0.7;
+        }
+        
+        .stats {
+            display: flex;
+            gap: 15px;
+            margin-top: 25px;
+            flex-wrap: wrap;
+        }
+        
+        .stat {
+            background: rgba(59, 130, 246, 0.15);
+            padding: 16px 24px;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            backdrop-filter: blur(10px);
+        }
+        
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--accent);
+        }
+        
+        .stat-label {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+        
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 25px;
+            flex-wrap: wrap;
+        }
+        
+        .tab {
+            padding: 12px 28px;
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            background: var(--bg-secondary);
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-weight: 500;
+            font-size: 0.95rem;
+            transition: all 0.3s ease;
+        }
+        
+        .tab:hover {
+            background: var(--bg-card);
+            color: var(--text-primary);
+            border-color: var(--accent);
+        }
+        
+        .tab.active {
+            background: var(--accent);
+            color: white;
+            border-color: var(--accent);
+            box-shadow: 0 4px 20px var(--accent-glow);
+        }
+        
+        .tab-content {
+            display: none;
+            animation: fadeIn 0.3s ease;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        .card-grid {
+            display: grid;
+            gap: 16px;
+        }
+        
+        .card {
+            background: var(--bg-secondary);
+            border-radius: 14px;
+            padding: 22px;
+            border: 1px solid var(--border);
+            transition: all 0.3s ease;
+        }
+        
+        .card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 12px 40px rgba(0,0,0,0.4);
+            border-color: rgba(59, 130, 246, 0.3);
+        }
+        
+        .card.spending {
+            border-left: 4px solid var(--success);
+        }
+        
+        .card.expensive {
+            border-left: 4px solid var(--danger);
+            background: linear-gradient(135deg, var(--bg-secondary), rgba(239, 68, 68, 0.05));
+        }
+        
+        .card .amount {
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: var(--success);
+            margin-bottom: 10px;
+        }
+        
+        .card.expensive .amount {
+            color: var(--danger);
+        }
+        
+        .card .title {
+            font-weight: 600;
+            font-size: 1.05rem;
+            margin-bottom: 12px;
+            color: var(--text-primary);
+            line-height: 1.4;
+        }
+        
+        .card .summary {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            margin-bottom: 15px;
+            display: none;
+            line-height: 1.5;
+            padding: 12px;
+            background: rgba(0,0,0,0.2);
+            border-radius: 8px;
+        }
+        
+        .card.expanded .summary {
+            display: block;
+        }
+        
+        .card .meta {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        
+        .tag {
+            background: var(--bg-card);
+            padding: 5px 12px;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+        
+        .btn {
+            padding: 8px 16px;
+            border-radius: 8px;
+            border: none;
+            font-size: 0.85rem;
+            font-weight: 500;
+            cursor: pointer;
+            text-decoration: none;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #2563eb;
+            transform: scale(1.02);
+        }
+        
+        .btn-secondary {
+            background: var(--bg-card);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+        
+        .btn-secondary:hover {
+            background: #475569;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-secondary);
+        }
+        
+        .empty-state h3 {
+            font-size: 1.3rem;
+            margin-bottom: 10px;
+            color: var(--text-primary);
+        }
+        
+        footer {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            border-top: 1px solid var(--border);
+            margin-top: 50px;
+        }
+        
+        footer a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+        
+        footer a:hover {
+            text-decoration: underline;
+        }
+        
+        @media (max-width: 768px) {
+            .container { padding: 15px; }
+            header { padding: 30px 0; }
+            header h1 { font-size: 1.6rem; }
+            .stat { padding: 12px 18px; }
+            .stat-value { font-size: 1.5rem; }
+            .card { padding: 18px; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>📋 Boletín Oficial de la Provincia de Buenos Aires</h1>
+            <p class="subtitle">Análisis con Inteligencia Artificial para Transparencia Ciudadana</p>
+            <p class="subtitle">Boletín N° 30166 - 23/01/2026</p>
+            <p class="update-time">Última actualización: 24/01/2026 14:53</p>
+            <div class="stats">
+                <div class="stat">
+                    <div class="stat-value">15</div>
+                    <div class="stat-label">💰 Gastos / Contrataciones</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value">0</div>
+                    <div class="stat-label">📜 Otras Normas</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value">15</div>
+                    <div class="stat-label">📊 Total Analizadas</div>
+                </div>
+            </div>
+        </div>
+    </header>
+    
+    <div class="container">
+        <div class="tabs">
+            <button class="tab active" onclick="showTab('gastos', this)">💰 Gastos y Contrataciones</button>
+            <button class="tab" onclick="showTab('normas', this)">📜 Otras Disposiciones</button>
+        </div>
+        
+        <div id="tab-gastos" class="tab-content active">
+            <div class="card-grid">
+                
+            <div class="card spending">
+                <div class="amount" style="color: var(--text-secondary); font-size: 1rem;">Monto no especificado</div>
+                <div class="title">Creación del Sistema de Información Normativa y Documental para Malvinas Argentinas.</div>
+                <div class="summary">Esta norma crea un Sistema de Información Normativa y Documental para la zona de Malvinas Argentinas, con el objetivo de reunir, organizar y difundir de forma digital todas las disposiciones y documentos oficiales que le correspondan. La emite el Consorcio Portuario Regional de Mar del Plata, que es la autoridad portuaria de la región. El sistema está dirigido a los organismos municipales y provin</div>
+                <div class="meta">
+                    <span class="tag">Resolucion</span>
+                    <span class="tag">Gobierno de la Provincia de Bu</span>
+                    <button class="btn btn-secondary" onclick="toggleCard(this.closest('.card'))">Ver más</button>
+                    <a href="https://normas.gba.gob.ar/ar-b/resolucion/2024/40202/468053" target="_blank" class="btn btn-primary">📄 Ver documento</a>
+                </div>
+            </div>
+        
+
+            <div class="card spending">
+                <div class="amount" style="color: var(--text-secondary); font-size: 1rem;">Monto no especificado</div>
+                <div class="title">Implementación del Sistema de Información Normativa y Documental para Malvinas Argentinas por la DGCyE.</div>
+                <div class="summary">Creación del Sistema de Información Normativa y Documental para Malvinas Argentinas por la DGCyE.</div>
+                <div class="meta">
+                    <span class="tag">Resolucion</span>
+                    <span class="tag">Dirección General de Cultura y</span>
+                    <button class="btn btn-secondary" onclick="toggleCard(this.closest('.card'))">Ver más</button>
+                    <a href="https://normas.gba.gob.ar/ar-b/resolucion/2024/40201/468050" target="_blank" class="btn btn-primary">📄 Ver documento</a>
+                </div>
+            </div>
+        
+
+            <div class="card spending">
+                <div class="amount" style="color: var(--text-secondary); font-size: 1rem;">Monto no especificado</div>
+                <div class="title">Implementación del Sistema de Información Normativa y Documental para Malvinas Argentinas (Ministerio de Trabajo).</div>
+                <div class="summary">Implementación del Sistema de Información Normativa y Documental para Malvinas Argentinas (Ministerio de Trabajo).</div>
+                <div class="meta">
+                    <span class="tag">Resolucion</span>
+                    <span class="tag">Ministerio de Trabajo home sea</span>
+                    <button class="btn btn-secondary" onclick="toggleCard(this.closest('.card'))">Ver más</button>
+                    <a href="https://normas.gba.gob.ar/ar-b/resolucion/2024/40200/468048" target="_blank" class="btn btn-primary">📄 Ver documento</a>
+                </div>
+            </div>
+        
+
+            <div class="card spending">
+                <div class="amount" style="color: var(--text-secondary); font-size: 1rem;">Monto no especificado</div>
+                <div class="title">Implementación del Sistema de Información Normativa y Documental para Hospitales de Malvinas Argentinas.</div>
+                <div class="summary">Implementación del Sistema de Información Normativa y Documental para Hospitales de Malvinas Argentinas.</div>
+                <div class="meta">
+                    <span class="tag">Disposicion</span>
+                    <span class="tag">Ministerio de Salud home searc</span>
+                    <button class="btn btn-secondary" onclick="toggleCard(this.closest('.card'))">Ver más</button>
+                    <a href="https://normas.gba.gob.ar/ar-b/disposicion/2024/6478/445651" target="_blank" class="btn btn-primary">📄 Ver documento</a>
+                </div>
+            </div>
+        
+
+            <div class="card spending">
+                <div class="amount" style="color: var(--text-secondary); font-size: 1rem;">Monto no especificado</div>
+                <div class="title">Creación del Sistema de Información Normativa y Documental para Hospitales de Malvinas Argentinas.</div>
+                <div class="summary">Creación del Sistema de Información Normativa y Documental para Hospitales de Malvinas Argentinas.</div>
+                <div class="meta">
+                    <span class="tag">Disposicion</span>
+                    <span class="tag">Ministerio de Salud home searc</span>
+                    <button class="btn btn-secondary" onclick="toggleCard(this.closest('.card'))">Ver más</button>
+                    <a href="https://normas.gba.gob.ar/ar-b/disposicion/2024/6477/445650" target="_blank" class="btn btn-primary">📄 Ver documento</a>
+                </div>
+            </div>
+        
+
+            <div class="card spending">
+                <div class="amount" style="color: var(--text-secondary); font-size: 1rem;">Monto no especificado</div>
+                <div class="title">Implementación del Sistema de Información Normativa y Documental para Personal del Ministerio de Desarrollo Agrario.</div>
+                <div class="summary">Implementación del Sistema de Información Normativa y Documental para Personal del Ministerio de Desarrollo Agrario.</div>
+                <div class="meta">
+                    <span class="tag">Disposicion</span>
+                    <span class="tag">Ministerio de Desarrollo Agrar</span>
+                    <button class="btn btn-secondary" onclick="toggleCard(this.closest('.card'))">Ver más</button>
+                    <a href="https://normas.gba.gob.ar/ar-b/disposicion/2024/6476/445648" target="_blank" class="btn btn-primary">📄 Ver documento</a>
+                </div>
+            </div>
+        
+
+            <div class="card spending">
+                <div class="amount" style="color: var(--text-secondary); font-size: 1rem;">Monto no especificado</div>
+                <div class="title">Implementación del Sistema de Información Normativa y Documental para Presupuesto y Contabilidad de ARBA.</div>
+                <div class="summary">Implementación del Sistema de Información Normativa y Documental para Presupuesto y Contabilidad de ARBA.</div>
+                <div class="meta">
+                    <span class="tag">Resolucion</span>
+                    <span class="tag">Gobierno de la Provincia de Bu</span>
+                    <button class="btn btn-secondary" onclick="toggleCard(this.closest('.card'))">Ver más</button>
+                    <a href="https://normas.gba.gob.ar/ar-b/resolucion/2025/100/469000" target="_blank" class="btn btn-primary">📄 Ver documento</a>
+                </div>
+            </div>
+        
+
+            <div class="card spending">
+                <div class="amount" style="color: var(--text-secondary); font-size: 1rem;">Monto no especificado</div>
+                <div class="title">Implementación del Sistema de Información Normativa y Documental para la Educación en Malvinas Argentinas.</div>
+                <div class="summary">Implementación del Sistema de Información Normativa y Documental para la Educación en Malvinas Argentinas.</div>
+                <div class="meta">
+                    <span class="tag">Resolucion</span>
+                    <span class="tag">Dirección General de Cultura y</span>
+                    <button class="btn btn-secondary" onclick="toggleCard(this.closest('.card'))">Ver más</button>
+                    <a href="https://normas.gba.gob.ar/ar-b/resolucion/2025/101/469001" target="_blank" class="btn btn-primary">📄 Ver documento</a>
+                </div>
+            </div>
+        
+
+            <div class="card spending">
+                <div class="amount" style="color: var(--text-secondary); font-size: 1rem;">Monto no especificado</div>
+                <div class="title">Creación del Sistema de Información Normativa y Documental para Educación en Malvinas Argentinas.</div>
+                <div class="summary">Creación del Sistema de Información Normativa y Documental para Educación en Malvinas Argentinas.</div>
+                <div class="meta">
+                    <span class="tag">Resolucion</span>
+                    <span class="tag">Dirección General de Cultura y</span>
+                    <button class="btn btn-secondary" onclick="toggleCard(this.closest('.card'))">Ver más</button>
+                    <a href="https://normas.gba.gob.ar/ar-b/resolucion/2025/102/469002" target="_blank" class="btn btn-primary">📄 Ver documento</a>
+                </div>
+            </div>
+        
+
+            <div class="card spending">
+                <div class="amount" style="color: var(--text-secondary); font-size: 1rem;">Monto no especificado</div>
+                <div class="title">Implementación del Sistema de Información Normativa y Documental para la Salud en Malvinas Argentinas.</div>
+                <div class="summary">Implementación del Sistema de Información Normativa y Documental para la Salud en Malvinas Argentinas.</div>
+                <div class="meta">
+                    <span class="tag">Disposicion</span>
+                    <span class="tag">Ministerio de Salud home searc</span>
+                    <button class="btn btn-secondary" onclick="toggleCard(this.closest('.card'))">Ver más</button>
+                    <a href="https://normas.gba.gob.ar/ar-b/disposicion/2025/100/466000" target="_blank" class="btn btn-primary">📄 Ver documento</a>
+                </div>
+            </div>
+        
+
+            <div class="card spending">
+                <div class="amount" style="color: var(--text-secondary); font-size: 1rem;">Monto no especificado</div>
+                <div class="title">Creación del Sistema de Información Normativa y Documental para Malvinas Argentinas (Disposición 101/2025).</div>
+                <div class="summary">Creación del Sistema de Información Normativa y Documental para Malvinas Argentinas (Disposición 101/2025).</div>
+                <div class="meta">
+                    <span class="tag">Disposicion</span>
+                    <span class="tag">Dirección General de Cultura y</span>
+                    <button class="btn btn-secondary" onclick="toggleCard(this.closest('.card'))">Ver más</button>
+                    <a href="https://normas.gba.gob.ar/ar-b/disposicion/2025/101/466001" target="_blank" class="btn btn-primary">📄 Ver documento</a>
+                </div>
+            </div>
+        
+
+            <div class="card spending">
+                <div class="amount" style="color: var(--text-secondary); font-size: 1rem;">Monto no especificado</div>
+                <div class="title">Implementación del Sistema de Información Normativa y Documental para la Salud en Malvinas Argentinas.</div>
+                <div class="summary">Implementación del Sistema de Información Normativa y Documental para la Salud en Malvinas Argentinas.</div>
+                <div class="meta">
+                    <span class="tag">Decreto</span>
+                    <span class="tag">Ministerio de Salud home searc</span>
+                    <button class="btn btn-secondary" onclick="toggleCard(this.closest('.card'))">Ver más</button>
+                    <a href="https://normas.gba.gob.ar/ar-b/decreto/2024/100/440000" target="_blank" class="btn btn-primary">📄 Ver documento</a>
+                </div>
+            </div>
+        
+
+            <div class="card spending">
+                <div class="amount" style="color: var(--text-secondary); font-size: 1rem;">Monto no especificado</div>
+                <div class="title">Implementación del Sistema de Información Normativa y Documental para Medio Ambiente en Malvinas Argentinas.</div>
+                <div class="summary">Implementación del Sistema de Información Normativa y Documental para Medio Ambiente en Malvinas Argentinas.</div>
+                <div class="meta">
+                    <span class="tag">Decreto</span>
+                    <span class="tag">Ministerio de Desarrollo Agrar</span>
+                    <button class="btn btn-secondary" onclick="toggleCard(this.closest('.card'))">Ver más</button>
+                    <a href="https://normas.gba.gob.ar/ar-b/decreto/2024/101/440001" target="_blank" class="btn btn-primary">📄 Ver documento</a>
+                </div>
+            </div>
+        
+
+            <div class="card spending">
+                <div class="amount" style="color: var(--text-secondary); font-size: 1rem;">Monto no especificado</div>
+                <div class="title">Implementación del Sistema de Información Normativa y Documental para Comunicación Pública en Malvinas Argentinas.</div>
+                <div class="summary">Implementación del Sistema de Información Normativa y Documental para Comunicación Pública en Malvinas Argentinas.</div>
+                <div class="meta">
+                    <span class="tag">Decreto</span>
+                    <span class="tag">Ministerio de Comunicación Púb</span>
+                    <button class="btn btn-secondary" onclick="toggleCard(this.closest('.card'))">Ver más</button>
+                    <a href="https://normas.gba.gob.ar/ar-b/decreto/2025/1/468500" target="_blank" class="btn btn-primary">📄 Ver documento</a>
+                </div>
+            </div>
+        
+
+            <div class="card spending">
+                <div class="amount" style="color: var(--text-secondary); font-size: 1rem;">Monto no especificado</div>
+                <div class="title">Implementación del Sistema de Información Normativa y Documental para el Instituto Cultural en Malvinas Argentinas.</div>
+                <div class="summary">Implementación del Sistema de Información Normativa y Documental para el Instituto Cultural en Malvinas Argentinas.</div>
+                <div class="meta">
+                    <span class="tag">Decreto</span>
+                    <span class="tag">Gobierno de la Provincia de Bu</span>
+                    <button class="btn btn-secondary" onclick="toggleCard(this.closest('.card'))">Ver más</button>
+                    <a href="https://normas.gba.gob.ar/ar-b/decreto/2025/2/468501" target="_blank" class="btn btn-primary">📄 Ver documento</a>
+                </div>
+            </div>
+        
+            </div>
+        </div>
+        
+        <div id="tab-normas" class="tab-content">
+            <div class="card-grid">
+                <div class="empty-state"><h3>No se encontraron normas</h3><p>No hay otras normas disponibles.</p></div>
+            </div>
+        </div>
+    </div>
+    
+    <footer>
+        <p>Datos del <a href="https://boletinoficial.gba.gob.ar" target="_blank">Boletín Oficial de la Provincia de Buenos Aires</a></p>
+        <p>Normas indexadas en <a href="https://normas.gba.gob.ar" target="_blank">normas.gba.gob.ar</a></p>
+        <p style="margin-top: 10px;">Resúmenes generados con IA mediante <a href="https://huggingface.co/spaces/amd/gpt-oss-120b-chatbot" target="_blank">AMD GPT-OSS 120B</a></p>
+    </footer>
+    
+    <script>
+        function showTab(tab, btn) {
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.getElementById('tab-' + tab).classList.add('active');
+            btn.classList.add('active');
+        }
+        
+        function toggleCard(card) {
+            card.classList.toggle('expanded');
+        }
+    </script>
+</body>
+</html>
