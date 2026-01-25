@@ -27,6 +27,18 @@ except ImportError:
     SELENIUM_AVAILABLE = False
     print("⚠️ Selenium no disponible - licitaciones PBAC deshabilitadas")
 
+# OCR for image-based PDFs
+try:
+    from pypdf import PdfReader
+    import pytesseract
+    from pdf2image import convert_from_bytes
+    from PIL import Image
+    import io
+    OCR_AVAILABLE = True
+except ImportError:
+    OCR_AVAILABLE = False
+    print("⚠️ OCR no disponible - PDFs de imágenes no serán procesados")
+
 # Configuration
 BASE_URL = "https://normas.gba.gob.ar"
 BOLETIN_HOME = "https://boletinoficial.gba.gob.ar"
@@ -92,6 +104,66 @@ def is_spending_related(text):
     text_lower = text.lower()
     return any(kw in text_lower for kw in GASTO_KEYWORDS)
 
+def extract_text_from_pdf(pdf_url):
+    """
+    Download PDF and extract text. Uses OCR fallback for scanned/image PDFs.
+    Returns extracted text or empty string on failure.
+    """
+    if not OCR_AVAILABLE:
+        return ""
+    
+    try:
+        print(f"   📄 Descargando PDF...")
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        r = requests.get(pdf_url, timeout=60, headers=headers)
+        if r.status_code != 200:
+            return ""
+        
+        pdf_bytes = r.content
+        
+        # First try: extract text with pypdf (fast, for text-based PDFs)
+        try:
+            pdf_reader = PdfReader(io.BytesIO(pdf_bytes))
+            text = ""
+            for page in pdf_reader.pages[:5]:  # First 5 pages max
+                page_text = page.extract_text() or ""
+                text += page_text + "\n"
+            
+            # If we got enough text, return it
+            if len(text.strip()) > 200:
+                print(f"   ✅ Texto extraído del PDF ({len(text)} chars)")
+                return text[:5000]
+        except Exception as e:
+            pass
+        
+        # Fallback: OCR for scanned/image PDFs
+        print(f"   🔍 PDF es imagen, usando OCR...")
+        try:
+            # Convert PDF pages to images
+            images = convert_from_bytes(pdf_bytes, first_page=1, last_page=3, dpi=200)
+            
+            ocr_text = ""
+            for i, img in enumerate(images):
+                # OCR with Spanish language
+                page_text = pytesseract.image_to_string(img, lang='spa')
+                ocr_text += page_text + "\n"
+                print(f"     Página {i+1}: {len(page_text)} chars")
+            
+            if ocr_text.strip():
+                print(f"   ✅ OCR exitoso ({len(ocr_text)} chars)")
+                return ocr_text[:5000]
+                
+        except Exception as e:
+            print(f"   ⚠️ Error OCR: {e}")
+        
+        return ""
+        
+    except Exception as e:
+        print(f"   ⚠️ Error descargando PDF: {e}")
+        return ""
+
 def fetch_norm_detail(url):
     """Fetch full text from a norm page on normas.gba.gob.ar"""
     try:
@@ -108,6 +180,7 @@ def fetch_norm_detail(url):
         title = ""
         summary = ""
         organismo = ""
+        pdf_text = ""
         
         # Look for title patterns
         title_match = re.search(r'(Resolución|Disposición|Decreto|Ley)\s+\d+[/-]?\d*', text)
@@ -131,11 +204,41 @@ def fetch_norm_detail(url):
         if visto_match:
             summary = visto_match.group(1).strip()[:400]
         
+        # Check if page has little content (likely image-based PDF)
+        # Look for PDF link and try to extract text from it
+        if len(text) < 1000 or 'Ver copia texto original' in text:
+            # Find PDF links
+            pdf_links = soup.find_all('a', href=True)
+            for link in pdf_links:
+                href = link.get('href', '')
+                if '.pdf' in href.lower() or 'documentos' in href.lower():
+                    # Construct full URL
+                    if href.startswith('/'):
+                        pdf_url = f"https://normas.gba.gob.ar{href}"
+                    elif href.startswith('http'):
+                        pdf_url = href
+                    else:
+                        continue
+                    
+                    # Try to extract text from PDF
+                    pdf_text = extract_text_from_pdf(pdf_url)
+                    if pdf_text:
+                        # Use PDF text for better summarization
+                        text = pdf_text
+                        
+                        # Try to extract summary from PDF text too
+                        if not summary:
+                            visto_match = re.search(r'VISTO[:\s]+(.{100,500}?)(?=CONSIDERANDO|Y CONSIDERANDO|POR ELLO)', pdf_text, re.I | re.S)
+                            if visto_match:
+                                summary = visto_match.group(1).strip()[:400]
+                        break
+        
         return {
             'title': title,
             'summary': summary,
             'organismo': organismo or 'Gobierno de la Provincia de Buenos Aires',
-            'full_text': text[:3000]
+            'full_text': text[:3000],
+            'has_pdf': bool(pdf_text)
         }
     except Exception as e:
         return None
